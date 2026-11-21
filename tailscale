@@ -1,0 +1,74 @@
+#!/usr/bin/env bash
+#
+# setup-exit-node.sh
+# Skrip satu klik: install Tailscale, aktifkan IP forwarding,
+# dan daftarkan server sebagai exit node.
+#
+# Cara pakai:
+#   chmod +x setup-exit-node.sh
+#   sudo ./setup-exit-node.sh
+#
+set -euo pipefail
+
+# Pastikan dijalankan sebagai root
+if [ "$(id -u)" -ne 0 ]; then
+  echo "❌ Skrip ini harus dijalankan sebagai root (gunakan sudo)."
+  exit 1
+fi
+
+# Cek distribusi Linux yang didukung (Debian/Ubuntu, RHEL/CentOS/Fedora, Arch)
+if ! command -v apt-get >/dev/null 2>&1 \
+   && ! command -v dnf >/dev/null 2>&1 \
+   && ! command -v yum >/dev/null 2>&1 \
+   && ! command -v pacman >/dev/null 2>&1; then
+  echo "❌ Distribusi Linux tidak dikenali. Pastikan installer Tailscale mendukung OS ini."
+  exit 1
+fi
+
+echo "=== [1/4] Install Tailscale ==="
+if command -v tailscale >/dev/null 2>&1; then
+  echo "✅ Tailscale sudah terpasang, lewati instalasi."
+else
+  curl -fsSL https://tailscale.com/install.sh | sh
+fi
+
+echo "=== [2/4] Aktifkan IP forwarding ==="
+SYSCTL_FILE="/etc/sysctl.d/99-tailscale.conf"
+
+# Buat file baru (hindari duplikasi kalau skrip dijalankan ulang)
+cat > "$SYSCTL_FILE" <<'EOF'
+net.ipv4.ip_forward = 1
+net.ipv6.conf.all.forwarding = 1
+EOF
+
+# Terapkan
+sysctl -p "$SYSCTL_FILE"
+
+# Verifikasi
+if [ "$(sysctl -n net.ipv4.ip_forward)" = "1" ]; then
+  echo "✅ IPv4 forwarding aktif."
+else
+  echo "❌ Gagal mengaktifkan IPv4 forwarding."
+  exit 1
+fi
+
+echo "=== [3/4] Login Tailscale (jika belum) ==="
+# Jika belum login, jalankan tailscale up agar user bisa login
+if ! tailscale status >/dev/null 2>&1; then
+  echo "🔐 Belum login. Silakan login melalui URL yang muncul."
+  tailscale up
+else
+  echo "✅ Sudah login ke Tailscale."
+fi
+
+echo "=== [4/4] Daftarkan sebagai exit node ==="
+tailscale set --advertise-exit-node
+
+echo ""
+echo "🎉 Selesai!"
+echo "Langkah terakhir (WAJIB, manual di browser):"
+echo "  1. Buka https://console.tailscale.com/admin/machines"
+echo "  2. Cari server ini → menu ⋮ → Edit route settings"
+echo "  3. Centang 'Use as exit node' → Save"
+echo ""
+echo "Cek status dengan: tailscale status"
